@@ -1,65 +1,75 @@
 #!/usr/bin/env python3
+"""
+A test for the client methods
+"""
 import unittest
-from unittest.mock import patch, PropertyMock
+from unittest.mock import patch, Mock, PropertyMock
 from parameterized import parameterized, parameterized_class
 
-import client
+from typing import (
+    Mapping,
+    Sequence,
+    Any,
+)
+
 from client import GithubOrgClient
 from fixtures import TEST_PAYLOAD
 
 
 class TestGithubOrgClient(unittest.TestCase):
     """
-    Test the GithubOrgClient class methods
+    Test the GithubOrgClient org method for return value
     """
     @parameterized.expand([
-        ("google"),
-        ("abc")
+        ("google",),
+        ("abc",),
     ])
-    @patch('client.get_json', return_value={"payload": True})
-    def test_org(self, org, mock_org):
+    @patch('client.get_json')
+    def test_org(self, org_name, mock_get_json):
         """
-        Test TestGithubOrgClient's org method
-        Args:
-            org (str): organisation's name
+        Test for the org method.
         """
-        org_test = GithubOrgClient(org)
-        test_response = org_test.org
-        self.assertEqual(test_response, mock_org.return_value)
-        mock_org.assert_called_once()
+        client = GithubOrgClient(org_name)
+
+        client.org()
+        mock_get_json.assert_called_once_with(GithubOrgClient.ORG_URL.
+                                              format(org=org_name))
 
     def test_public_repos_url(self):
         """
-        Test TestGithubOrgClient's _public_repos_url method works
-        as expected.
+        Test that the result of _public_repos_url is the expected one
+        based on the mocked payload
         """
-        with patch.object(GithubOrgClient,
-                          'org',
-                          new_callable=PropertyMock) as m:
-            m.return_value = {"repos_url": "89"}
-            test_org = GithubOrgClient('holberton')
-            test_repo_url = test_org._public_repos_url
-            self.assertEqual(test_repo_url, m.return_value.get('repos_url'))
-            m.assert_called_once()
+        with patch('client.GithubOrgClient.org',
+                   new_callable=PropertyMock) as mock_org:
+            payload = {"repos_url": "World"}
+            mock_org.return_value = payload
 
-    @patch('client.get_json', return_value=[{'name': 'Holberton'},
-                                            {'name': '89'},
-                                            {'name': 'alx'}])
-    def test_public_repos(self, mock_repo):
-        """
-        Test GithubOrgClient's public_repos method
-        """
-        with patch.object(GithubOrgClient,
-                          '_public_repos_url',
-                          new_callable=PropertyMock,
-                          return_value="https://api.github.com/") as m:
+            client = GithubOrgClient('org name')
+            result = client._public_repos_url
 
-            test_client = GithubOrgClient('holberton')
-            test_repo = test_client.public_repos()
-            for idx in range(3):
-                self.assertIn(mock_repo.return_value[idx]['name'], test_repo)
-            mock_repo.assert_called_once()
-            m.assert_called_once()
+            self.assertEqual(result, payload["repos_url"])
+
+    @patch('client.get_json')
+    def test_public_repos(self, mock_get_json):
+        """
+        Test that the list of repos is what you expect from the chosen payload.
+        """
+        json_payload = [{"name": "Google"}, {"name": "Twitter"}]
+        mock_get_json.return_value = json_payload
+
+        with patch('client.GithubOrgClient._public_repos_url',
+                   new_callable=PropertyMock) as mock_public:
+
+            mock_public.return_value = "hello/world"
+            client = GithubOrgClient('org name')
+            result = client.public_repos()
+
+            check = [i["name"] for i in json_payload]
+            self.assertEqual(result, check)
+
+            mock_public.assert_called_once()
+            mock_get_json.assert_called_once()
 
     @parameterized.expand([
         ({"license": {"key": "my_license"}}, "my_license", True),
@@ -67,74 +77,65 @@ class TestGithubOrgClient(unittest.TestCase):
     ])
     def test_has_license(self, repo, license_key, expected):
         """
-        Test GithubOrgClient's has_license method
-        Args:
-            repo (dict): dictionary
-            license_key (str): license in the repo dict
+        Test GithubOrgClient.has_license
         """
-        test_instance = GithubOrgClient('holberton')
-        license_available = test_instance.has_license(repo, license_key)
-        self.assertEqual(license_available, expected)
-
-
-def requests_get(*args, **kwargs):
-    """
-    Function that mocks requests.get function
-    Returns the correct json data based on the given input url
-    """
-    class MockResponse:
-        """
-        Mock response
-        """
-        def __init__(self, json_data):
-            self.json_data = json_data
-
-        def json(self):
-            return self.json_data
-
-    if args[0] == "https://api.github.com/orgs/google":
-        return MockResponse(TEST_PAYLOAD[0][0])
-    if args[0] == TEST_PAYLOAD[0][0]["repos_url"]:
-        return MockResponse(TEST_PAYLOAD[0][1])
+        result = GithubOrgClient.has_license(repo, license_key)
+        self.assertEqual(result, expected)
 
 
 @parameterized_class(
-    ('org_payload', 'repos_payload', 'expected_repos', 'apache2_repos'),
-    [(TEST_PAYLOAD[0][0], TEST_PAYLOAD[0][1], TEST_PAYLOAD[0][2],
-      TEST_PAYLOAD[0][3])]
+    ("org_payload", "repos_payload", "expected_repos", "apache2_repos"),
+    TEST_PAYLOAD
 )
 class TestIntegrationGithubOrgClient(unittest.TestCase):
     """
-    Integration test for the GithubOrgClient.public_repos method
+    Integrations test for GithubOrgClient
     """
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         """
-        Set up function for TestIntegrationGithubOrgClient class
-        Sets up a patcher to be used in the class methods
+        A class method called before tests in an individual class are run
         """
-        cls.get_patcher = patch('utils.requests.get', side_effect=requests_get)
-        cls.get_patcher.start()
-        cls.client = GithubOrgClient('google')
+
+        config = {
+            'return_value.json.side_effect':
+            [
+                cls.org_payload, cls.repos_payload,
+                cls.org_payload, cls.repos_payload
+            ]
+        }
+
+        cls.get_patcher = patch('requests.get', **config)
+
+        cls.mock = cls.get_patcher.start()
 
     @classmethod
-    def tearDownClass(cls):
+    def tearDownClass(cls) -> None:
         """
-        Tear down resources set up for class tests.
-        Stops the patcher that had been started
+        A class method called after tests in an individual class have run
         """
         cls.get_patcher.stop()
 
     def test_public_repos(self):
         """
-        Test public_repos method without license
+        Integration test: public repos
         """
-        self.assertEqual(self.client.public_repos(), self.expected_repos)
+        client = GithubOrgClient("google")
+
+        self.assertEqual(client.org, self.org_payload)
+        self.assertEqual(client.repos_payload, self.repos_payload)
+        self.assertEqual(client.public_repos(), self.expected_repos)
+        self.assertEqual(client.public_repos("XLICENSE"), [])
+        self.mock.assert_called()
 
     def test_public_repos_with_license(self):
         """
-        Test public_repos method with license
+        Integration test for public repos with License
         """
-        self.assertEqual(
-            self.client.public_repos(license="apache-2.0"),
-            self.apache2_repos)
+        client = GithubOrgClient("google")
+
+        self.assertEqual(client.public_repos(), self.expected_repos)
+        self.assertEqual(client.public_repos("XLICENSE"), [])
+        self.assertEqual(client.public_repos(
+            "apache-2.0"), self.apache2_repos)
+        self.mock.assert_called()
